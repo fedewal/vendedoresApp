@@ -25,6 +25,8 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
 
+    private static final String EMBUDO = BuildConfig.BASE_URL + "/vendedores/";
+
     private static final int PIDO_UBICACION = 1;
     private static final int PIDO_SEGUNDO_PLANO = 2;
 
@@ -72,15 +74,39 @@ public class MainActivity extends Activity {
                 }
                 return false;
             }
+
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                // El admin es SÓLO la puerta de login. Si el vendedor queda
+                // en su índice se encierra: esa página no linkea a
+                // /vendedores/ y la app no tiene barra ni botón de inicio.
+                // (Encontrado probando la v0.1.0.)
+                if (url != null && url.startsWith(BuildConfig.BASE_URL + "/admin/")
+                        && !url.contains("/admin/login")) {
+                    v.loadUrl(EMBUDO);
+                }
+            }
         });
 
         if (savedInstanceState == null) {
-            web.loadUrl(BuildConfig.BASE_URL + "/vendedores/");
+            web.loadUrl(EMBUDO);
         } else {
             web.restoreState(savedInstanceState);
         }
 
         pedirPermisos();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // Tocar el ícono con la app ya abierta tiene que llevar al embudo.
+        // Con `launchMode="singleTask"` Android reanuda esta actividad sin
+        // pasar por `onCreate`, así que si no se hace acá no se hace nunca.
+        String actual = web.getUrl();
+        if (actual == null || !actual.startsWith(EMBUDO)) {
+            web.loadUrl(EMBUDO);
+        }
     }
 
     private void abrirAfuera(Uri destino) {
