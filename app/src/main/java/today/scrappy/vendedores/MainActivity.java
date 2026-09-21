@@ -95,6 +95,9 @@ public class MainActivity extends Activity {
         }
 
         pedirPermisos();
+        // Al abrir, y en segundo plano: si hay una versión nueva publicada
+        // el vendedor se entera solo, sin que nadie tenga que avisarle.
+        Actualizaciones.chequear(this);
     }
 
     @Override
