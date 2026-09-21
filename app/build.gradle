@@ -1,0 +1,75 @@
+plugins {
+    id 'com.android.application'
+}
+
+// La firma NO va en el repo. `keystore.properties` y el .jks viven fuera
+// (OneDrive\Documents\claves-vendedoresApp) y están en .gitignore: si el
+// keystore se pierde, la app no se puede volver a actualizar nunca y hay
+// que desinstalarla de cada teléfono.
+def propsFirma = new Properties()
+def archivoFirma = rootProject.file("keystore.properties")
+if (archivoFirma.exists()) {
+    propsFirma.load(new FileInputStream(archivoFirma))
+}
+
+android {
+    namespace 'today.scrappy.vendedores'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "today.scrappy.vendedores"
+        // El equipo es un Samsung A16 (Android 14). 26 deja lugar a un
+        // teléfono más viejo sin costarnos nada.
+        minSdk 26
+        // 34 y no 36: el A16 corre Android 14, y un targetSdk más alto sólo
+        // sumaría restricciones nuevas que no necesitamos. Al no publicar en
+        // Play, tampoco hay un mínimo que cumplir.
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+        // La URL del módulo, para no tenerla desperdigada por el código.
+        buildConfigField "String", "BASE_URL", '"https://back.scrappy.today"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        release {
+            if (propsFirma.getProperty('storeFile')) {
+                storeFile file(propsFirma.getProperty('storeFile'))
+                storePassword propsFirma.getProperty('storePassword')
+                keyAlias propsFirma.getProperty('keyAlias')
+                keyPassword propsFirma.getProperty('keyPassword')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Sin ofuscar: la app es un caparazón y un servicio. R8 sólo
+            // agregaría una forma de que algo falle en el teléfono y no acá.
+            minifyEnabled false
+            if (propsFirma.getProperty('storeFile')) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // NINGUNA. Con `minSdk 26` todo lo que usa la app existe en la
+    // plataforma: `checkSelfPermission` y `requestPermissions` desde API 23,
+    // `Notification.Builder(context, canal)` y `startForegroundService`
+    // desde la 26.
+    //
+    // Se probó con `appcompat` y arrastraba la stdlib de Kotlin en dos
+    // versiones incompatibles (`Duplicate class kotlin.*`). Sacarla resuelve
+    // eso de raíz, achica el APK y deja el build sin nada que bajar.
+}

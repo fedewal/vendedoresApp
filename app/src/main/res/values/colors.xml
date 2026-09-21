@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- El acento del modulo (base.html de vendedores). -->
+    <color name="ic_launcher_background">#0c6273</color>
+</resources>
