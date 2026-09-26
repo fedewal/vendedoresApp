@@ -7,6 +7,8 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.os.PowerManager;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -156,6 +158,33 @@ public class MainActivity extends Activity {
                     PIDO_SEGUNDO_PLANO);
         }
         UbicacionService.arrancar(this);
+        pedirBateriaSinLimite();
+    }
+
+    /**
+     * Pide quedar fuera de la optimización de batería. Sin esto Samsung mata
+     * el proceso en segundo plano y el servicio de ubicación no vuelve a
+     * arrancar hasta que se abre la app: el 2026-09-26 un teléfono dejó de
+     * mandar puntos a las 04:50 y no volvió en todo el día. Se pide sólo si
+     * ya hay permiso de ubicación (sin eso no hay seguimiento que cuidar), y
+     * se vuelve a pedir en cada apertura hasta que se conceda.
+     */
+    private void pedirBateriaSinLimite() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        PowerManager energia = (PowerManager) getSystemService(POWER_SERVICE);
+        if (energia == null || energia.isIgnoringBatteryOptimizations(getPackageName())) {
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            // Algún fabricante sin esa pantalla: el seguimiento anda igual
+            // mientras la app no quede dormida.
+        }
     }
 
     @Override
