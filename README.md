@@ -41,11 +41,14 @@ seguimiento no funciona:
   aperturas, manda `tel:` y `whatsapp:` al sistema (si los abriera el
   WebView, el botón de Llamar no haría nada) y deja que "atrás" navegue
   dentro del sitio.
-- **`UbicacionService`** — servicio en primer plano que manda la posición
-  cada 5 minutos o cada 50 metros. Se autentica con **la misma cookie de
-  sesión del WebView**: no hay ninguna credencial dentro del APK, que es lo
-  que permite que este repo sea público. Si la sesión venció, el servidor
-  responde el 302 al login y el punto se descarta.
+- **`UbicacionService`** — servicio en primer plano que toma **un punto cada
+  10 s, mandados en tanda cada minuto** (`puntos` = JSON con `lat`, `lon`,
+  `precision` y `t`, la hora del teléfono en milisegundos). Parado también
+  toma puntos: es lo que deja ver cuánto estuvo en cada lugar. Se autentica
+  con **la misma cookie de sesión del WebView**: no hay ninguna credencial
+  dentro del APK, que es lo que permite que este repo sea público. Si la
+  tanda no llega (sin señal, sesión vencida → 302), los puntos esperan a la
+  siguiente, hasta 600 (100 minutos); el servidor descarta los repetidos.
 - **`ArranqueReceiver`** — lo vuelve a levantar después de reiniciar el
   teléfono. Sin esto, un reinicio de madrugada deja al vendedor sin
   registrar y nadie se entera.

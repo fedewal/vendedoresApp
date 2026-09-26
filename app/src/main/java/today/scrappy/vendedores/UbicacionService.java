@@ -12,15 +12,23 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.webkit.CookieManager;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Manda dónde está el vendedor mientras trabaja.
@@ -33,8 +41,13 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Se autentica con la MISMA cookie de sesión que el WebView: no hay
  * credencial adentro del APK, que es obligatorio si el repo es público.
- * Si la sesión venció, el POST vuelve 302 al login y el punto se descarta
- * hasta que el vendedor vuelva a entrar.
+ *
+ * <p>Toma un punto cada 10 s pero los manda en tanda una vez por minuto
+ * ({@code puntos} = JSON con lat, lon, precision y t en milisegundos). Si
+ * la tanda no llega (sin señal, 302 por sesión vencida, servidor caído),
+ * los puntos vuelven al buffer y salen con la tanda siguiente: el servidor
+ * descarta los repetidos por la hora en que se tomaron, así que reenviar
+ * no duplica nada.
  */
 public class UbicacionService extends Service {
 
@@ -42,13 +55,41 @@ public class UbicacionService extends Service {
     private static final String CANAL = "ubicacion";
     private static final int NOTIFICACION = 1;
 
-    /** Cada cuánto se pide una posición nueva. */
-    private static final long CADA_MS = 5 * 60 * 1000L;
-    /** Y cuánto se tiene que haber movido para que valga la pena. */
-    private static final float MINIMO_METROS = 50f;
+    private static final String RUTA = "/vendedores/ubicacion/";
+    private static final String REFERER = "/vendedores/";
+
+    /** Cada cuánto se pide una posición nueva: 10 s lo pidió Federico, para
+     *  que la línea del mapa siga las calles y no corte esquinas. */
+    private static final long CADA_MS = 10_000L;
+    /** Cero a propósito: parado también cuenta. Es lo que permite que el
+     *  mapa diga "de 10:05 a 10:35" en el mismo lugar. */
+    private static final float MINIMO_METROS = 0f;
+    /** Cada cuánto se sube el buffer: una conexión por minuto en vez de seis
+     *  cuida la batería (la radio se despierta una vez y no seis). */
+    private static final long ENVIO_MS = 60_000L;
+    /** 600 puntos = 100 minutos sin señal. Pasado eso se tiran los más
+     *  viejos: el buffer no crece sin techo en un teléfono que no vuelve a
+     *  tener red. */
+    private static final int MAX_PENDIENTES = 600;
+    /** Un punto de red dentro de los 20 s de uno de GPS se ignora: la red
+     *  salta 100 m y le mete dientes a una línea que el GPS dibuja bien.
+     *  Pasados 20 s sin GPS (adentro de un local) la red vuelve a valer. */
+    private static final long GPS_MANDA_MS = 20_000L;
 
     private LocationManager gestor;
     private LocationListener oyente;
+    /** Siempre bajo su propio candado: lo tocan el main looper y el hilo
+     *  del envío. */
+    private final ArrayList<JSONObject> pendientes = new ArrayList<>();
+    private long ultimoGps = 0L;
+    private final Handler reloj = new Handler(Looper.getMainLooper());
+    private final Runnable cadaMinuto = new Runnable() {
+        @Override
+        public void run() {
+            enviarTanda();
+            reloj.postDelayed(this, ENVIO_MS);
+        }
+    };
 
     public static void arrancar(Context contexto) {
         Intent i = new Intent(contexto, UbicacionService.class);
@@ -73,7 +114,7 @@ public class UbicacionService extends Service {
         oyente = new LocationListener() {
             @Override
             public void onLocationChanged(Location punto) {
-                enviar(punto);
+                anotar(punto);
             }
 
             // En API 26 estos tres siguen siendo abstractos en algunos
@@ -89,6 +130,7 @@ public class UbicacionService extends Service {
         // También por red: adentro de un local el GPS no engancha, y una
         // posición aproximada es mejor que ninguna.
         pedirA(LocationManager.NETWORK_PROVIDER);
+        reloj.postDelayed(cadaMinuto, ENVIO_MS);
     }
 
     private void pedirA(String proveedor) {
@@ -101,21 +143,68 @@ public class UbicacionService extends Service {
         }
     }
 
-    private void enviar(final Location punto) {
+    private void anotar(Location punto) {
+        // Llega en el main looper (requestLocationUpdates sin looper usa el
+        // del hilo que lo pidió), así que ultimoGps no necesita candado.
+        if (LocationManager.GPS_PROVIDER.equals(punto.getProvider())) {
+            ultimoGps = punto.getTime();
+        } else if (LocationManager.NETWORK_PROVIDER.equals(punto.getProvider())
+                && punto.getTime() - ultimoGps < GPS_MANDA_MS) {
+            return;
+        }
+        try {
+            JSONObject p = new JSONObject();
+            p.put("lat", punto.getLatitude());
+            p.put("lon", punto.getLongitude());
+            p.put("precision", Math.round(punto.getAccuracy()));
+            // La hora en que el teléfono TOMÓ el punto, no la del envío: la
+            // tanda sale hasta un minuto después (o cien, sin señal).
+            p.put("t", punto.getTime());
+            devolver(Collections.singletonList(p), false);
+        } catch (Exception e) {
+            // put() sólo falla con NaN/Infinity: ese punto no sirve.
+            Log.w(TAG, "punto inválido", e);
+        }
+    }
+
+    /** Agrega al buffer (al principio si son reintentos, para no desordenar
+     *  la línea) y recorta los más viejos pasado el techo. */
+    private void devolver(List<JSONObject> puntos, boolean alPrincipio) {
+        synchronized (pendientes) {
+            pendientes.addAll(alPrincipio ? 0 : pendientes.size(), puntos);
+            int sobran = pendientes.size() - MAX_PENDIENTES;
+            if (sobran > 0) {
+                pendientes.subList(0, sobran).clear();
+            }
+        }
+    }
+
+    private void enviarTanda() {
+        final List<JSONObject> tanda;
+        synchronized (pendientes) {
+            if (pendientes.isEmpty()) {
+                return;
+            }
+            tanda = new ArrayList<>(pendientes);
+            pendientes.clear();
+        }
         new Thread(new Runnable() {
             @Override
             public void run() {
                 HttpURLConnection con = null;
+                boolean llego = false;
                 try {
                     String base = BuildConfig.BASE_URL;
                     String cookies = CookieManager.getInstance().getCookie(base);
                     if (cookies == null || !cookies.contains("sessionid")) {
-                        // Todavía no entró, o la sesión venció. El punto se
-                        // pierde a propósito: guardarlo para después sería
-                        // acumular ubicaciones de alguien sin sesión.
+                        // Todavía no entró nunca, o salió. La tanda se tira a
+                        // propósito: guardarla sería acumular ubicaciones de
+                        // alguien sin sesión. (Una sesión VENCIDA sí manda
+                        // la cookie y vuelve 302: esa tanda espera, abajo.)
+                        llego = true;
                         return;
                     }
-                    URL url = new URL(base + "/vendedores/ubicacion/");
+                    URL url = new URL(base + RUTA);
                     con = (HttpURLConnection) url.openConnection();
                     con.setRequestMethod("POST");
                     con.setConnectTimeout(15000);
@@ -129,27 +218,29 @@ public class UbicacionService extends Service {
                     if (csrf != null) {
                         con.setRequestProperty("X-CSRFToken", csrf);
                         // Django compara el Referer en HTTPS.
-                        con.setRequestProperty("Referer", base + "/vendedores/");
+                        con.setRequestProperty("Referer", base + REFERER);
                     }
 
-                    String cuerpo = "lat=" + punto.getLatitude()
-                            + "&lon=" + punto.getLongitude()
-                            + "&precision=" + Math.round(punto.getAccuracy())
-                            + "&tipo=seguimiento";
+                    String cuerpo = "puntos=" + URLEncoder.encode(
+                            new JSONArray(tanda).toString(), "UTF-8");
                     try (OutputStream salida = con.getOutputStream()) {
                         salida.write(cuerpo.getBytes(StandardCharsets.UTF_8));
                     }
                     int codigo = con.getResponseCode();
-                    if (codigo >= 400 || codigo == 302) {
-                        Log.w(TAG, "el servidor rechazó la ubicación: " + codigo);
+                    llego = codigo == 204;
+                    if (!llego) {
+                        // 302 = sesión vencida: la tanda espera a que vuelva
+                        // a entrar (hasta el techo del buffer).
+                        Log.w(TAG, "el servidor no tomó la tanda: " + codigo);
                     }
                 } catch (Exception e) {
-                    // Sin señal, servidor caído, lo que sea: el próximo
-                    // punto llega en cinco minutos. Nada que reintentar.
-                    Log.w(TAG, "no se pudo mandar la ubicación", e);
+                    Log.w(TAG, "no se pudo mandar la tanda", e);
                 } finally {
                     if (con != null) {
                         con.disconnect();
+                    }
+                    if (!llego) {
+                        devolver(tanda, true);
                     }
                 }
             }
@@ -195,6 +286,7 @@ public class UbicacionService extends Service {
 
     @Override
     public void onDestroy() {
+        reloj.removeCallbacks(cadaMinuto);
         if (gestor != null && oyente != null) {
             try {
                 gestor.removeUpdates(oyente);
