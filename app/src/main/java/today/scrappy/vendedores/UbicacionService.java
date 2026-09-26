@@ -92,8 +92,21 @@ public class UbicacionService extends Service {
     };
 
     public static void arrancar(Context contexto) {
-        Intent i = new Intent(contexto, UbicacionService.class);
-        contexto.startForegroundService(i);
+        // Sin el permiso ni se intenta: con targetSdk 34, un servicio de tipo
+        // `location` que llama a startForeground sin permiso de ubicación
+        // revienta con SecurityException (y al arrancar el teléfono, con un
+        // cartel de "la app se detuvo" que nadie entiende).
+        if (contexto.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        try {
+            contexto.startForegroundService(new Intent(contexto, UbicacionService.class));
+        } catch (Exception e) {
+            // Android puede negarse a arrancarlo con la app en segundo plano.
+            // La próxima vez que se abra la app se vuelve a intentar.
+            Log.w(TAG, "no se pudo arrancar el seguimiento", e);
+        }
     }
 
     @Override
