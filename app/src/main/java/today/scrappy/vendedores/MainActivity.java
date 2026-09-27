@@ -9,11 +9,17 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.os.PowerManager;
+import android.util.TypedValue;
+import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.util.List;
 
 
 /**
@@ -33,13 +39,36 @@ public class MainActivity extends Activity {
     private static final int PIDO_SEGUNDO_PLANO = 2;
 
     private WebView web;
+    /** El cartel rojo de arriba (ver `revisarSalud`). */
+    private TextView cartelSalud;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         web = new WebView(this);
-        setContentView(web);
+        // El cartel rojo arriba de la página cuando algo impide que la
+        // ubicación llegue (ver `revisarSalud`). Es nativo porque lo que revisa
+        // sólo lo sabe el teléfono; lleva a la sección de Salud.
+        cartelSalud = new TextView(this);
+        cartelSalud.setBackgroundColor(0xFFD63C3C);
+        cartelSalud.setTextColor(0xFFFFFFFF);
+        cartelSalud.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        int pad = Math.round(12 * getResources().getDisplayMetrics().density);
+        cartelSalud.setPadding(pad, pad, pad, pad);
+        cartelSalud.setVisibility(View.GONE);
+        cartelSalud.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, SaludActivity.class));
+            }
+        });
+        LinearLayout raiz = new LinearLayout(this);
+        raiz.setOrientation(LinearLayout.VERTICAL);
+        raiz.addView(cartelSalud);
+        raiz.addView(web, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        setContentView(raiz);
 
         WebSettings ajustes = web.getSettings();
         ajustes.setJavaScriptEnabled(true);
@@ -49,6 +78,10 @@ public class MainActivity extends Activity {
         ajustes.setUseWideViewPort(false);
         ajustes.setLoadWithOverviewMode(false);
         ajustes.setSupportZoom(false);
+        // La marca en el User-Agent: con ella la página muestra el link a la
+        // sección de Salud, que sólo existe adentro de la app.
+        ajustes.setUserAgentString(
+                ajustes.getUserAgentString() + " VendedoresApp/" + BuildConfig.VERSION_NAME);
 
         // La sesión de Django vive en una cookie, y tiene que sobrevivir a
         // cerrar la app: si no, el vendedor loguea cada vez que la abre.
@@ -63,6 +96,13 @@ public class MainActivity extends Activity {
                 // `tel:`, `whatsapp:` y `mailto:` no son páginas: si los
                 // abriera el WebView, el botón de Llamar de la ficha no
                 // haría nada. Van al sistema.
+                // `scrappy://salud`: el link de los menús web a la sección
+                // nativa de Salud. Va antes que los otros esquemas o se iría
+                // afuera como si fuera un `tel:`.
+                if ("scrappy".equals(esquema) && "salud".equals(destino.getHost())) {
+                    startActivity(new Intent(MainActivity.this, SaludActivity.class));
+                    return true;
+                }
                 if (esquema != null && !esquema.equals("http") && !esquema.equals("https")) {
                     abrirAfuera(destino);
                     return true;
@@ -100,6 +140,35 @@ public class MainActivity extends Activity {
         // Al abrir, y en segundo plano: si hay una versión nueva publicada
         // el vendedor se entera solo, sin que nadie tenga que avisarle.
         Actualizaciones.chequear(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // El permiso pudo concederse recién desde los ajustes (el cartel de
+        // Salud manda ahí): arrancar dos veces no hace nada.
+        UbicacionService.arrancar(this);
+        revisarSalud();
+    }
+
+    /**
+     * Muestra el cartel rojo si algo impide que la ubicación llegue, y lo
+     * esconde si ya está todo bien. Se revisa en cada vuelta al frente: la
+     * persona va a los ajustes, lo arregla, y al volver el cartel no está.
+     */
+    private void revisarSalud() {
+        List<Salud.Item> mal = Salud.criticosFallando(this);
+        if (mal.isEmpty()) {
+            cartelSalud.setVisibility(View.GONE);
+            return;
+        }
+        // Genérico a propósito: los títulos de los chequeos están en positivo
+        // ("Ahorro de batería apagado") y citarlos acá diría lo contrario de lo
+        // que pasa. El detalle está en la sección.
+        cartelSalud.setText("⚠  Tu ubicación no llega al centro de mando ("
+                + mal.size() + (mal.size() == 1 ? " cosa" : " cosas")
+                + " para arreglar). Tocá acá.");
+        cartelSalud.setVisibility(View.VISIBLE);
     }
 
     @Override

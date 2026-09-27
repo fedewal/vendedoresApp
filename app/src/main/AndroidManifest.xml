@@ -41,6 +41,13 @@
             </intent-filter>
         </activity>
 
+        <!-- La sección de Salud (permisos, GPS, batería). La abre el link
+             scrappy://salud de la página, que intercepta MainActivity. -->
+        <activity
+            android:name=".SaludActivity"
+            android:exported="false"
+            android:label="Salud del teléfono" />
+
         <service
             android:name=".UbicacionService"
             android:exported="false"
