@@ -149,6 +149,9 @@ public class MainActivity extends Activity {
         // Salud manda ahí): arrancar dos veces no hace nada.
         UbicacionService.arrancar(this);
         revisarSalud();
+        // Volver a la app después de un rato también mira si hay versión nueva
+        // (el propio Actualizaciones decide si ya preguntó hace poco).
+        Actualizaciones.chequearSiCorresponde(this);
     }
 
     /**

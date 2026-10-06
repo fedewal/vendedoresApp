@@ -119,11 +119,24 @@ final class Salud {
                           + "registrando tu ubicación.",
                 false, ajustesAvisos));
 
-        // SIN chequeo de "instalar actualizaciones": esta app no declara
-        // REQUEST_INSTALL_PACKAGES (se actualiza por el navegador), y en ese caso
-        // Android TIRA SecurityException en vez de devolver false. La v0.3.0 lo
-        // preguntaba y se cerraba sola al abrirse, y el servicio de ubicación
-        // reventaba a cada minuto (2026-09-27).
+        // Desde la v0.4.0 la app declara REQUEST_INSTALL_PACKAGES (actualización
+        // obligatoria). Sin esa declaración Android TIRA SecurityException en vez
+        // de devolver false -- la v0.3.0 se cerraba sola por eso (2026-09-27) --,
+        // así que igual va en try: esto nunca puede tumbar la app.
+        boolean instalar;
+        try {
+            instalar = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                    || c.getPackageManager().canRequestPackageInstalls();
+        } catch (RuntimeException e) {
+            instalar = true;
+        }
+        items.add(new Item("actualizaciones", "Instalar actualizaciones", instalar,
+                instalar ? "La app se puede actualizar sola."
+                        : "Hace falta para instalar las versiones nuevas. Activá "
+                          + "\"Permitir de esta fuente\".",
+                false, new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + c.getPackageName()))));
+
         long ultimo = UbicacionService.ultimoPuntoMs;
         long minutos = ultimo == 0 ? -1 : (System.currentTimeMillis() - ultimo) / 60_000L;
         // Sin clave: no es un permiso, es la prueba de que lo demás funciona.
